@@ -3,11 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#1a2744">
+<meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Trolley Check">
 <title>SOMENGIL · Trolley Check</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="https://res.cloudinary.com/dlkkjtgvy/image/upload/v1775600210/%C3%8DCONE_VERS%C3%83O_PRINCIPAL_qoqnjb.png">
+<link rel="apple-touch-icon" href="https://res.cloudinary.com/dlkkjtgvy/image/upload/v1775600210/%C3%8DCONE_VERS%C3%83O_PRINCIPAL_qoqnjb.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -729,6 +732,80 @@ function esc(s){ return (s||'').replace(/'/g,"\\'"); }
 // ══════════════════════════════════════════
 renderRecent();
 window.addEventListener('load', initAuth);
+
+// ══════════════════════════════════════════
+// PWA — Service Worker + Manifest
+// ══════════════════════════════════════════
+const MANIFEST = {
+  name: "SOMENGIL Trolley Check",
+  short_name: "Trolley Check",
+  description: "Registo fotográfico de trolleys SOMENGIL",
+  start_url: location.href,
+  display: "standalone",
+  orientation: "portrait",
+  background_color: "#000000",
+  theme_color: "#000000",
+  icons: [{
+    src: "https://res.cloudinary.com/dlkkjtgvy/image/upload/v1775600210/%C3%8DCONE_VERS%C3%83O_PRINCIPAL_qoqnjb.png",
+    sizes: "512x512",
+    type: "image/png",
+    purpose: "any maskable"
+  }]
+};
+
+// Inject manifest dynamically (works from any URL)
+const mblob = new Blob([JSON.stringify(MANIFEST)], {type:'application/manifest+json'});
+const mlink = document.createElement('link');
+mlink.rel = 'manifest';
+mlink.href = URL.createObjectURL(mblob);
+document.head.appendChild(mlink);
+
+// Register minimal service worker (required for PWA install prompt)
+if ('serviceWorker' in navigator) {
+  const swCode = `
+    self.addEventListener('install', e => self.skipWaiting());
+    self.addEventListener('activate', e => clients.claim());
+    self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => new Response('Offline'))));
+  `;
+  const swBlob = new Blob([swCode], {type:'application/javascript'});
+  const swUrl = URL.createObjectURL(swBlob);
+  navigator.serviceWorker.register(swUrl, {scope: '/'}).catch(err => {
+    // scope error is expected on some servers — PWA still works
+    navigator.serviceWorker.register(swUrl).catch(()=>{});
+  });
+}
+
+// Show install prompt when available
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  showInstallBtn();
+});
+window.addEventListener('appinstalled', () => { hideInstallBtn(); deferredPrompt = null; });
+
+function showInstallBtn() {
+  let btn = document.getElementById('installBtn');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'installBtn';
+    btn.innerHTML = '📲 Instalar App';
+    btn.style.cssText = 'position:fixed;bottom:80px;right:16px;z-index:9999;background:linear-gradient(135deg,#2d5be3,#4a7aff);color:#fff;border:none;border-radius:12px;padding:10px 18px;font-family:DM Sans,sans-serif;font-size:14px;font-weight:600;box-shadow:0 4px 16px rgba(45,91,227,.4);cursor:pointer;';
+    btn.onclick = async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const {outcome} = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') hideInstallBtn();
+      deferredPrompt = null;
+    };
+    document.body.appendChild(btn);
+  }
+  btn.style.display = 'block';
+}
+function hideInstallBtn() {
+  const btn = document.getElementById('installBtn');
+  if (btn) btn.style.display = 'none';
+}
 </script>
 </body>
 </html>
