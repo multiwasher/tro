@@ -441,33 +441,45 @@ function updateAuthUI(u) {
 // Cria ou reutiliza uma pasta pelo nome dentro de um parent
 async function getOrCreateFolder(parentId, folderName) {
   const key = parentId + '/' + folderName;
-  if (fcache[key]) return fcache[key];
+  if (fcache[key]) { console.log('[Drive] cache hit:', folderName); return fcache[key]; }
 
+  console.log('[Drive] procurar pasta:', folderName, 'em', parentId);
   const q = encodeURIComponent(`name='${folderName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
   const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
     {headers:{Authorization:'Bearer '+tok}});
-  if (!r.ok) throw new Error('Drive search failed: ' + r.status);
+  console.log('[Drive] search status:', r.status);
+  if (r.status === 401) { tok = null; updateAuthUI(null); throw new Error('Token expirado — faz login novamente'); }
+  if (!r.ok) { const t = await r.text(); throw new Error('Drive search failed: ' + r.status + ' ' + t); }
   const d = await r.json();
-  if (d.files && d.files.length) { fcache[key] = d.files[0].id; return d.files[0].id; }
+  if (d.files && d.files.length) {
+    console.log('[Drive] pasta encontrada:', folderName, d.files[0].id);
+    fcache[key] = d.files[0].id; return d.files[0].id;
+  }
 
+  console.log('[Drive] criar pasta:', folderName);
   const cr = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
     method:'POST',
     headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},
     body:JSON.stringify({name:folderName, mimeType:'application/vnd.google-apps.folder', parents:[parentId]})
   });
-  if (!cr.ok) throw new Error('Drive folder create failed: ' + cr.status);
+  console.log('[Drive] create status:', cr.status);
+  if (cr.status === 401) { tok = null; updateAuthUI(null); throw new Error('Token expirado — faz login novamente'); }
+  if (!cr.ok) { const t = await cr.text(); throw new Error('Drive folder create failed: ' + cr.status + ' ' + t); }
   const f = await cr.json();
+  console.log('[Drive] pasta criada:', folderName, f.id);
   fcache[key] = f.id; return f.id;
 }
 
 async function uploadFile(file, trolleyId, stepId, idx) {
   // Hierarquia: Trolley Check / TROLLEY_ID / 1_Etiqueta / foto.jpg
+  console.log('[Drive] upload:', trolleyId, stepId, idx, 'tok:', !!tok);
   const step = STEPS.find(s=>s.id===stepId);
   const trolleyFolderId = await getOrCreateFolder(ROOT_FOLDER_ID, trolleyId);
   const stepFolderId    = await getOrCreateFolder(trolleyFolderId, step.folder);
 
   const ext  = (file.name.match(/\.[^.]+$/)||['.jpg'])[0];
   const name = `${trolleyId}_${step.folder}_${Date.now()}_${idx}${ext}`;
+  console.log('[Drive] enviar ficheiro:', name, 'para pasta:', stepFolderId);
 
   const meta = JSON.stringify({name, parents:[stepFolderId]});
   const body = new FormData();
@@ -477,11 +489,14 @@ async function uploadFile(file, trolleyId, stepId, idx) {
   const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',{
     method:'POST', headers:{Authorization:'Bearer '+tok}, body
   });
+  console.log('[Drive] upload status:', r.status);
+  if (r.status === 401) { tok = null; updateAuthUI(null); throw new Error('Token expirado — faz login novamente'); }
   if (!r.ok) {
     const txt = await r.text();
     throw new Error(`Upload ${r.status}: ${txt}`);
   }
   const result = await r.json();
+  console.log('[Drive] upload OK:', result.id);
   result.stepFolderId = stepFolderId;
   return result;
 }
@@ -659,7 +674,8 @@ document.getElementById('camInput').addEventListener('change', async function(e)
       ok++;
     }catch(err){
       sd.photos[startIdx+i].uploading=false;
-      console.error('Upload error:',err);
+      console.error('[Drive] Upload error:', err);
+      showToast('❌ ' + err.message);
     }
     saveDB();
   }
