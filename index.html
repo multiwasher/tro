@@ -335,12 +335,15 @@ body::before{display:none;}
 const CLIENT_ID = '836439172538-sed9nvmstv49883qatiqjkm3g41u1kqi.apps.googleusercontent.com';
 const SCOPE     = 'https://www.googleapis.com/auth/drive';
 
+// Pasta raiz "Trolley Check" no Google Drive
+const ROOT_FOLDER_ID = '1YittGq4olKzeHDjCnebjutPcKlnTHze2';
+
 const STEPS = [
-  {id:'etiqueta', e:'🏷️', t:'Etiqueta ID',      d:'Leitura clara do código identificador.',    min:2, fid:'1b9LhXsNTBl4zDs1IAXqi6aXPzO2ilmqg'},
-  {id:'trolley',  e:'🛒', t:'Trolley Completo',  d:'Vista frontal de corpo inteiro.',            min:4, fid:'1X0jmyRjfC2zspsa7PHWC65Ydz28p1K3y'},
-  {id:'giro',     e:'🔄', t:'Giro 360°',         d:'Capturar as 4 quinas em sequência.',         min:4, fid:'1ydYQMRCHi9GmKsQR28AItcJ3u4_EMi7F'},
-  {id:'laterais', e:'↔️', t:'Laterais',          d:'Fotos posicionado de frente para laterais.', min:4, fid:'1-ZhkgwXixNvvAWuriN2kV_gCwplwB8fi'},
-  {id:'detalhes', e:'🔧', t:'Detalhes',          d:'Cestos, Portas, Dobradiças.',                min:4, fid:'1_WGsDXHIcKYuD7RKTXYIUUfEAupz-8T2'},
+  {id:'etiqueta', e:'🏷️', t:'Etiqueta ID',      d:'Leitura clara do código identificador.',    min:2, folder:'1_Etiqueta'},
+  {id:'trolley',  e:'🛒', t:'Trolley Completo',  d:'Vista frontal de corpo inteiro.',            min:4, folder:'2_Trolley_Completo'},
+  {id:'giro',     e:'🔄', t:'Giro 360°',         d:'Capturar as 4 quinas em sequência.',         min:4, folder:'3_Giro_360'},
+  {id:'laterais', e:'↔️', t:'Laterais',          d:'Fotos posicionado de frente para laterais.', min:4, folder:'4_Laterais'},
+  {id:'detalhes', e:'🔧', t:'Detalhes',          d:'Cestos, Portas, Dobradiças.',                min:4, folder:'5_Detalhes'},
 ];
 
 // ══════════════════════════════════════════
@@ -437,11 +440,12 @@ function updateAuthUI(u) {
 // ══════════════════════════════════════════
 // DRIVE UPLOAD
 // ══════════════════════════════════════════
-async function getDriveFolder(parentFid, trolleyId) {
-  const key = parentFid + '_' + trolleyId;
+// Cria ou reutiliza uma pasta pelo nome dentro de um parent
+async function getOrCreateFolder(parentId, folderName) {
+  const key = parentId + '/' + folderName;
   if (fcache[key]) return fcache[key];
 
-  const q = encodeURIComponent(`name='${trolleyId}' and '${parentFid}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const q = encodeURIComponent(`name='${folderName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
   const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`,
     {headers:{Authorization:'Bearer '+tok}});
   if (!r.ok) throw new Error('Drive search failed: ' + r.status);
@@ -451,7 +455,7 @@ async function getDriveFolder(parentFid, trolleyId) {
   const cr = await fetch('https://www.googleapis.com/drive/v3/files?fields=id', {
     method:'POST',
     headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},
-    body:JSON.stringify({name:trolleyId, mimeType:'application/vnd.google-apps.folder', parents:[parentFid]})
+    body:JSON.stringify({name:folderName, mimeType:'application/vnd.google-apps.folder', parents:[parentId]})
   });
   if (!cr.ok) throw new Error('Drive folder create failed: ' + cr.status);
   const f = await cr.json();
@@ -459,12 +463,15 @@ async function getDriveFolder(parentFid, trolleyId) {
 }
 
 async function uploadFile(file, trolleyId, stepId, idx) {
+  // Hierarquia: Trolley Check / TROLLEY_ID / 1_Etiqueta / foto.jpg
   const step = STEPS.find(s=>s.id===stepId);
-  const folderId = await getDriveFolder(step.fid, trolleyId);
-  const ext = (file.name.match(/\.[^.]+$/)||['.jpg'])[0];
-  const name = `${trolleyId}_${stepId}_${Date.now()}_${idx}${ext}`;
+  const trolleyFolderId = await getOrCreateFolder(ROOT_FOLDER_ID, trolleyId);
+  const stepFolderId    = await getOrCreateFolder(trolleyFolderId, step.folder);
 
-  const meta = JSON.stringify({name, parents:[folderId]});
+  const ext  = (file.name.match(/\.[^.]+$/)||['.jpg'])[0];
+  const name = `${trolleyId}_${step.folder}_${Date.now()}_${idx}${ext}`;
+
+  const meta = JSON.stringify({name, parents:[stepFolderId]});
   const body = new FormData();
   body.append('metadata', new Blob([meta],{type:'application/json'}));
   body.append('file', file);
@@ -476,7 +483,9 @@ async function uploadFile(file, trolleyId, stepId, idx) {
     const txt = await r.text();
     throw new Error(`Upload ${r.status}: ${txt}`);
   }
-  return await r.json(); // {id, webViewLink}
+  const result = await r.json();
+  result.stepFolderId = stepFolderId;
+  return result;
 }
 
 // ══════════════════════════════════════════
@@ -636,6 +645,8 @@ document.getElementById('camInput').addEventListener('change', async function(e)
       sd.photos[startIdx+i].fid=res.id;
       sd.photos[startIdx+i].link=res.webViewLink;
       sd.photos[startIdx+i].uploading=false;
+      // guardar folder id para link no detalhe
+      if (res.stepFolderId) sd.stepDriveFolderId = res.stepFolderId;
       ok++;
     }catch(err){
       sd.photos[startIdx+i].uploading=false;
@@ -696,7 +707,7 @@ function renderDetail(){
       </div>
       <div class="dsc-photos">${ph}</div>
       ${sd.notes?`<div class="dsc-notes">📝 ${sd.notes}</div>`:''}
-      <div class="dsc-link"><a href="https://drive.google.com/drive/folders/${s.fid}" target="_blank">☁️ Ver pasta no Google Drive</a></div>
+      <div class="dsc-link"><a href="https://drive.google.com/drive/folders/${db[curId].steps[s.id].stepDriveFolderId||''}" target="_blank" ${!db[curId].steps[s.id].stepDriveFolderId?'style="display:none"':''}>☁️ Ver pasta no Google Drive</a></div>
     </div>`;
   }).join('');
   document.getElementById('detailBody').innerHTML=`
