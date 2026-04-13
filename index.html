@@ -685,11 +685,23 @@ document.getElementById('camInput').addEventListener('change', async function(e)
 });
 
 function finishReg(){
+  const btn = document.getElementById('btnFin');
+  // Feedback imediato no botão
+  const originalHTML = btn.innerHTML;
+  btn.innerHTML = '⏳ A guardar...';
+  btn.disabled = true;
+  btn.style.opacity = '0.75';
+
   const ta=document.querySelector('#stepWrap textarea');
   if(ta) db[curId].steps[STEPS[curStep].id].notes=ta.value;
   touchRec(curId);
-  showToast('✅ Registo guardado!');
-  setTimeout(goHome,900);
+
+  setTimeout(() => {
+    btn.innerHTML = '✅ Guardado!';
+    btn.style.opacity = '1';
+    showToast('✅ Registo guardado!');
+    setTimeout(goHome, 900);
+  }, 400);
 }
 
 // ══════════════════════════════════════════
