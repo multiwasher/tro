@@ -108,7 +108,7 @@ body::before{display:none;}
 .prog-info strong{font-size:13px;font-weight:600;color:#fff;}
 .tabs{display:flex;gap:7px;padding:0 20px 14px;overflow-x:auto;scrollbar-width:none;flex-shrink:0;}
 .tabs::-webkit-scrollbar{display:none;}
-.tab{flex-shrink:0;padding:7px 13px;border-radius:10px;border:1.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;}
+.tab{flex-shrink:0;padding:10px 14px;border-radius:10px;border:1.5px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;-webkit-tap-highlight-color:rgba(255,255,255,.1);user-select:none;}
 .tab.active{background:var(--blue);border-color:var(--blue);color:#fff;}
 .tab.done{border-color:var(--green);color:var(--green);background:rgba(16,185,129,.1);}
 .tab-dot{width:17px;height:17px;border-radius:50%;background:rgba(255,255,255,.14);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;}
@@ -594,11 +594,18 @@ function renderCap(){
 }
 
 function switchStep(i){
-  // save notes
-  const ta=document.querySelector('#stepWrap textarea');
-  if(ta) db[curId].steps[STEPS[curStep].id].notes=ta.value, saveDB();
-  curStep=i; renderCap();
-  document.querySelectorAll('.tab')[i]?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+  try {
+    const ta = document.querySelector('#stepWrap textarea');
+    if(ta && curId && STEPS[curStep]) {
+      db[curId].steps[STEPS[curStep].id].notes = ta.value;
+      saveDB();
+    }
+  } catch(e) {}
+  curStep = i;
+  renderCap();
+  try {
+    document.querySelectorAll('.tab')[i]?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+  } catch(e) {}
 }
 function saveNotes(sid,v){ db[curId].steps[sid].notes=v; touchRec(curId); }
 function isComplete(rec){ return STEPS.every(s=>rec.steps[s.id].photos.length>=s.min); }
