@@ -627,11 +627,15 @@ document.getElementById('camInput').addEventListener('change', async function(e)
   const startIdx=sd.photos.length;
   entries.forEach(e=>sd.photos.push(e));
   touchRec(tid); renderCap();
-  showToast(`📷 ${files.length} foto${files.length>1?'s':''} adicionada${files.length>1?'s':''}`);
+  showToast(`📷 ${files.length} foto${files.length>1?'s':''} guardada${files.length>1?'s':''} localmente`);
 
-  if(!tok){ return; }
+  if(!tok){
+    showToast(`📷 ${files.length} foto${files.length>1?'s':''} guardada${files.length>1?'s':''}  ·  Liga o Drive para sincronizar`);
+    return;
+  }
 
-  // Upload
+  // Upload — aguarda 700ms para o toast de confirmação ser legível
+  await new Promise(r => setTimeout(r, 700));
   document.getElementById('uplLbl').textContent='A enviar para Google Drive...';
   document.getElementById('uplSub').textContent=`0 / ${files.length}`;
   document.getElementById('uplOv').classList.add('show');
