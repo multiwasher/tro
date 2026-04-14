@@ -464,10 +464,28 @@ function onToken(resp) {
   } catch(e) {}
   updateAuthUI(user);
   showToast('☁️ Google Drive ligado!');
-  syncRegistosFromDrive();
+  
+  // Se estava numa sincronização pendente, continuar
+  if (window._pendingSync) {
+    window._pendingSync = false;
+    syncRegistosFromDrive();
+  } else {
+    syncRegistosFromDrive();
+  }
 }
 
 function signIn()  { tc.requestAccessToken(); }
+function renewToken() {
+  console.log('[Auth] Renovando token...');
+  window._pendingSync = true;
+  const tcRenew = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPE,
+    prompt: 'select_account',
+    callback: onToken,
+  });
+  tcRenew.requestAccessToken();
+}
 function signOut() {
   if (tok) try { google.accounts.oauth2.revoke(tok, ()=>{}); } catch(e) {}
   tok = null; user = null;
@@ -493,15 +511,34 @@ function updateAuthUI(u) {
 // SINCRONIZAÇÃO DE REGISTOS DO DRIVE
 // ══════════════════════════════════════════
 async function syncRegistosFromDrive() {
-  if (!tok) return;
+  // Se não há token, tentar renovar silenciosamente
+  if (!tok) {
+    if (localStorage.getItem('userAuthed') === 'true') {
+      console.log('[Sync] Token expirado, tentando renovar...');
+      showToast('⏳ Autenticando...');
+      renewToken();
+      return;
+    } else {
+      showToast('❌ Faça login no Google Drive primeiro');
+      return;
+    }
+  }
+
   console.log('[Sync] Iniciando sincronização de registos...');
+  showToast('⏳ A sincronizar registos...');
+  
   try {
     const q = encodeURIComponent(`'${ROOT_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
     const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1000`,
       {headers:{Authorization:'Bearer '+tok}});
     if (!r.ok) {
       console.log('[Sync] Erro ao listar pastas:', r.status);
-      showToast('❌ Erro ao sincronizar');
+      if (r.status === 401) {
+        tok = null;
+        showToast('❌ Sessão expirada. Faça login novamente');
+      } else {
+        showToast('❌ Erro ao sincronizar');
+      }
       return;
     }
     const data = await r.json();
@@ -598,7 +635,7 @@ async function syncRegistosFromDrive() {
       renderRecent();
       renderHist();
     } else {
-      console.log('[Sync] Nenhum registo novo para sincronizar');
+      showToast('✅ Tudo sincronizado');
     }
   } catch(err) {
     console.error('[Sync] Erro geral:', err);
@@ -1081,7 +1118,7 @@ document.head.appendChild(mlink);
 // Register minimal service worker (required for PWA install prompt)
 if ('serviceWorker' in navigator) {
   const swCode = `
-    const VERSION = '1.6.0';
+    const VERSION = '1.7.0';
     self.addEventListener('install', e => self.skipWaiting());
     self.addEventListener('activate', e => {
       clients.claim();
