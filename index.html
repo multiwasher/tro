@@ -8,15 +8,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trolley Check">
+<meta name="app-version" content="1.2.0">
 <title>SOMENGIL · Trolley Check</title>
 <link rel="icon" href="https://res.cloudinary.com/dlkkjtgvy/image/upload/v1775600210/%C3%8DCONE_VERS%C3%83O_PRINCIPAL_qoqnjb.png">
 <link rel="apple-touch-icon" href="https://res.cloudinary.com/dlkkjtgvy/image/upload/v1775600210/%C3%8DCONE_VERS%C3%83O_PRINCIPAL_qoqnjb.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
-<!-- Firebase Scripts -->
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js"></script>
 <style>
 :root{
   --navy:#1a2744;--navy-mid:#223060;
@@ -335,26 +332,13 @@ body::before{display:none;}
 // ══════════════════════════════════════════
 // CONFIG
 // ══════════════════════════════════════════
+const APP_VERSION = '1.2.0';
+const BUILD_TIME = '2026-04-14T' + new Date().toISOString().split('T')[1];
 const CLIENT_ID = '836439172538-sed9nvmstv49883qatiqjkm3g41u1kqi.apps.googleusercontent.com';
 const SCOPE     = 'https://www.googleapis.com/auth/drive';
 
 // Pasta raiz "Trolley Check" no Google Drive
 const ROOT_FOLDER_ID = '1YittGq4olKzeHDjCnebjutPcKlnTHze2';
-
-// Firebase Configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyAciNzkzECNPkea3eClQAuNVjyEzjZCkPQ",
-  authDomain: "trolley-check.firebaseapp.com",
-  projectId: "trolley-check",
-  storageBucket: "trolley-check.firebasestorage.app",
-  messagingSenderId: "1089635563229",
-  appId: "1:1089635563229:web:9aea0800ec34e86e0c4d34"
-};
-
-// Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-const db_firestore = firebase.firestore();
-const auth = firebase.auth();
 
 const STEPS = [
   {id:'etiqueta', e:'🏷️', t:'Etiqueta ID',      d:'Leitura clara do código identificador.',    min:2, folder:'1_Etiqueta'},
@@ -433,23 +417,7 @@ async function getImageFromIDB(imageId) {
 function newRec(id) {
   const steps = {}; STEPS.forEach(s => { steps[s.id] = {photos:[], notes:''}; });
   db[id] = {id, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), steps};
-  saveDB(); 
-  
-  // Enviar para Firestore (notificação por email)
-  if (auth.currentUser) {
-    const regData = {
-      recordId: id,
-      userEmail: auth.currentUser.email,
-      userName: auth.currentUser.displayName || 'Utilizador',
-      createdAt: new Date(),
-      notificationSent: false
-    };
-    db_firestore.collection('registos').add(regData).catch(err => {
-      console.error('[Firebase] Erro ao guardar registo:', err);
-    });
-  }
-  
-  return db[id];
+  saveDB(); return db[id];
 }
 function touchRec(id) { if(db[id]){ db[id].updatedAt = new Date().toISOString(); saveDB(); } }
 
