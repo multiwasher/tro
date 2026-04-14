@@ -2,7 +2,7 @@
 <html lang="pt">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -393,7 +393,21 @@ function initAuth() {
     prompt: 'select_account',
     callback: onToken,
   });
-  updateAuthUI(null);  // always start logged out
+  updateAuthUI(null);
+  // Tentar silent login se já foi autenticado antes
+  if (localStorage.getItem('userAuthed') === 'true') {
+    console.log('[Auth] Tentando silent login...');
+    const tcSilent = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPE,
+      prompt: '',
+      callback: onToken,
+    });
+    tcSilent.requestAccessToken({prompt:''}).catch(err => {
+      console.log('[Auth] Silent login falhou:', err);
+      localStorage.removeItem('userAuthed');
+    });
+  }
 }
 
 function onToken(resp) {
@@ -402,6 +416,7 @@ function onToken(resp) {
     return;
   }
   tok = resp.access_token;
+  localStorage.setItem('userAuthed', 'true');
   // Decode name/picture from id_token if present (not always)
   // Otherwise just show generic logged-in state
   user = { name: 'Conta Google', picture: null };
@@ -413,12 +428,14 @@ function onToken(resp) {
   } catch(e) {}
   updateAuthUI(user);
   showToast('☁️ Google Drive ligado!');
+  syncRegistosFromDrive();
 }
 
 function signIn()  { tc.requestAccessToken(); }
 function signOut() {
   if (tok) try { google.accounts.oauth2.revoke(tok, ()=>{}); } catch(e) {}
   tok = null; user = null;
+  localStorage.removeItem('userAuthed');
   updateAuthUI(null);
   showToast('👋 Sessão terminada');
 }
@@ -432,6 +449,133 @@ function updateAuthUI(u) {
     const av = document.getElementById('aAvatar');
     av.innerHTML = u.picture ? `<img src="${u.picture}" referrerpolicy="no-referrer">` : u.name[0].toUpperCase();
     document.getElementById('aName').textContent = u.name;
+  }
+}
+
+// ══════════════════════════════════════════
+// SINCRONIZAÇÃO DE REGISTOS DO DRIVE
+// ══════════════════════════════════════════
+async function syncRegistosFromDrive() {
+  if (!tok) return;
+  console.log('[Sync] Iniciando sincronização de registos...');
+  try {
+    const q = encodeURIComponent(`'${ROOT_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1000`,
+      {headers:{Authorization:'Bearer '+tok}});
+    if (!r.ok) {
+      console.log('[Sync] Erro ao listar pastas:', r.status);
+      return;
+    }
+    const data = await r.json();
+    const folders = data.files || [];
+    console.log('[Sync] Encontradas', folders.length, 'pastas de trolleys');
+
+    let synced = 0;
+    for (const folder of folders) {
+      const trolleyId = folder.name;
+      if (db[trolleyId]) {
+        console.log('[Sync] Registo', trolleyId, 'já existe localmente');
+        continue;
+      }
+      try {
+        const mq = encodeURIComponent(`'${folder.id}' in parents and name='metadata.json' and trashed=false`);
+        const mr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${mq}&fields=files(id)`,
+          {headers:{Authorization:'Bearer '+tok}});
+        if (!mr.ok) continue;
+        const md = await mr.json();
+        if (!md.files || !md.files.length) continue;
+
+        const fileId = md.files[0].id;
+        const fr = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+          {headers:{Authorization:'Bearer '+tok}});
+        if (!fr.ok) continue;
+        const metadata = await fr.json();
+        
+        if (metadata && metadata.id && metadata.steps) {
+          db[trolleyId] = metadata;
+          console.log('[Sync] Registo sincronizado:', trolleyId);
+          synced++;
+        }
+      } catch(err) {
+        console.log('[Sync] Erro ao sincronizar', trolleyId, ':', err);
+      }
+    }
+    saveDB();
+    if (synced > 0) {
+      showToast(`✅ ${synced} registo${synced>1?'s':''} sincronizado${synced>1?'s':''} do Drive!`);
+      renderRecent();
+      renderHist();
+    }
+  } catch(err) {
+    console.error('[Sync] Erro geral:', err);
+  }
+}
+
+async function saveMetadataToDrive(trolleyId) {
+  if (!tok) return;
+  console.log('[Meta] Guardando metadata do registo:', trolleyId);
+  try {
+    const rec = db[trolleyId];
+    if (!rec) return;
+    
+    // Preparar metadata (sem base64)
+    const metadata = {
+      id: rec.id,
+      createdAt: rec.createdAt,
+      updatedAt: rec.updatedAt,
+      steps: {}
+    };
+    
+    // Copiar apenas informações relevantes (sem dataUrl em base64)
+    STEPS.forEach(s => {
+      const sd = rec.steps[s.id];
+      metadata.steps[s.id] = {
+        photos: sd.photos.map(p => ({
+          fid: p.fid,
+          link: p.link
+        })),
+        notes: sd.notes
+      };
+    });
+
+    const trolleyFolder = await getOrCreateFolder(ROOT_FOLDER_ID, trolleyId);
+    
+    // Procura se já existe metadata.json
+    const mq = encodeURIComponent(`'${trolleyFolder}' in parents and name='metadata.json' and trashed=false`);
+    const mr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${mq}&fields=files(id)`,
+      {headers:{Authorization:'Bearer '+tok}});
+    
+    let metaFileId = null;
+    if (mr.ok) {
+      const md = await mr.json();
+      if (md.files && md.files.length) metaFileId = md.files[0].id;
+    }
+
+    const metaJson = JSON.stringify(metadata);
+    const metaBlob = new Blob([metaJson], {type:'application/json'});
+    
+    if (metaFileId) {
+      // Atualizar ficheiro existente
+      const ur = await fetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${metaFileId}?uploadType=media`,
+        {method:'PATCH',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:metaJson}
+      );
+      if (ur.ok) console.log('[Meta] Metadata atualizada no Drive');
+    } else {
+      // Criar novo ficheiro
+      const meta = JSON.stringify({name:'metadata.json',parents:[trolleyFolder]});
+      const body = new FormData();
+      body.append('metadata', new Blob([meta],{type:'application/json'}));
+      body.append('file', metaBlob);
+      
+      const cr = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+        {method:'POST',headers:{Authorization:'Bearer '+tok},body}
+      );
+      if (cr.ok) console.log('[Meta] Metadata criada no Drive');
+    }
+  } catch(err) {
+    console.error('[Meta] Erro ao guardar metadata:', err);
   }
 }
 
@@ -696,6 +840,13 @@ function finishReg(){
   if(ta) db[curId].steps[STEPS[curStep].id].notes=ta.value;
   touchRec(curId);
 
+  // Se ligado ao Drive, guardar metadata.json
+  if (tok) {
+    saveMetadataToDrive(curId).catch(err => {
+      console.error('Erro ao guardar metadata:', err);
+    });
+  }
+
   setTimeout(() => {
     btn.innerHTML = '✅ Guardado!';
     btn.style.opacity = '1';
@@ -811,7 +962,7 @@ document.head.appendChild(mlink);
 // Register minimal service worker (required for PWA install prompt)
 if ('serviceWorker' in navigator) {
   const swCode = `
-    const VERSION = '1.4.0';
+    const VERSION = '1.5.0';
     self.addEventListener('install', e => self.skipWaiting());
     self.addEventListener('activate', e => {
       clients.claim();
