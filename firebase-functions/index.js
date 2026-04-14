@@ -14,7 +14,7 @@ admin.initializeApp();
 // Configure seu email e senha de app (Google)
 // Vide: https://support.google.com/accounts/answer/185833
 const EMAIL_USER = "qualidade@somengil.com";
-const EMAIL_PASSWORD = "YOUR_GMAIL_APP_PASSWORD"; // Substituir!
+const EMAIL_PASSWORD = "jiac vutj avro gkne";
 
 // Criar transporter de email
 const transporter = nodemailer.createTransport({
