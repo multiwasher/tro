@@ -654,7 +654,7 @@ async function saveMetadataToDrive(trolleyId) {
   console.log('[Meta] Guardando metadata do registo:', trolleyId);
   try {
     const rec = db[trolleyId];
-    if (!rec) return;
+    if (!rec) throw new Error('Registo não encontrado na base de dados local');
     
     // Preparar metadata (sem base64)
     const metadata = {
@@ -683,6 +683,9 @@ async function saveMetadataToDrive(trolleyId) {
     const mr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${mq}&fields=files(id)`,
       {headers:{Authorization:'Bearer '+tok}});
     
+    if (mr.status === 401) throw new Error('Token expirado - faça login novamente');
+    if (!mr.ok) throw new Error(`Erro ao procurar metadata no Drive (${mr.status})`);
+    
     let metaFileId = null;
     if (mr.ok) {
       const md = await mr.json();
@@ -698,7 +701,9 @@ async function saveMetadataToDrive(trolleyId) {
         `https://www.googleapis.com/upload/drive/v3/files/${metaFileId}?uploadType=media`,
         {method:'PATCH',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:metaJson}
       );
-      if (ur.ok) console.log('[Meta] Metadata atualizada no Drive');
+      if (ur.status === 401) throw new Error('Token expirado - faça login novamente');
+      if (!ur.ok) throw new Error(`Erro ao atualizar metadata (${ur.status})`);
+      console.log('[Meta] Metadata atualizada no Drive');
     } else {
       // Criar novo ficheiro
       const meta = JSON.stringify({name:'metadata.json',parents:[trolleyFolder]});
@@ -710,10 +715,13 @@ async function saveMetadataToDrive(trolleyId) {
         'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
         {method:'POST',headers:{Authorization:'Bearer '+tok},body}
       );
-      if (cr.ok) console.log('[Meta] Metadata criada no Drive');
+      if (cr.status === 401) throw new Error('Token expirado - faça login novamente');
+      if (!cr.ok) throw new Error(`Erro ao criar metadata no Drive (${cr.status})`);
+      console.log('[Meta] Metadata criada no Drive');
     }
   } catch(err) {
     console.error('[Meta] Erro ao guardar metadata:', err);
+    throw err;
   }
 }
 
@@ -731,11 +739,15 @@ async function getOrCreateFolder(parentId, folderName) {
     {headers:{Authorization:'Bearer '+tok}});
   console.log('[Drive] search status:', r.status);
   if (r.status === 401) { tok = null; updateAuthUI(null); throw new Error('Token expirado — faz login novamente'); }
-  if (!r.ok) { const t = await r.text(); throw new Error('Drive search failed: ' + r.status + ' ' + t); }
+  if (!r.ok) { 
+    const t = await r.text(); 
+    throw new Error('Acesso ao Drive falhou (' + r.status + ') - verifique a ligação à internet'); 
+  }
   const d = await r.json();
   if (d.files && d.files.length) {
     console.log('[Drive] pasta encontrada:', folderName, d.files[0].id);
-    fcache[key] = d.files[0].id; return d.files[0].id;
+    fcache[key] = d.files[0].id; 
+    return d.files[0].id;
   }
 
   console.log('[Drive] criar pasta:', folderName);
@@ -746,10 +758,14 @@ async function getOrCreateFolder(parentId, folderName) {
   });
   console.log('[Drive] create status:', cr.status);
   if (cr.status === 401) { tok = null; updateAuthUI(null); throw new Error('Token expirado — faz login novamente'); }
-  if (!cr.ok) { const t = await cr.text(); throw new Error('Drive folder create failed: ' + cr.status + ' ' + t); }
+  if (!cr.ok) { 
+    const t = await cr.text(); 
+    throw new Error('Não foi possível criar pasta no Drive (' + cr.status + ') - quota excedida ou sem permissão'); 
+  }
   const f = await cr.json();
   console.log('[Drive] pasta criada:', folderName, f.id);
-  fcache[key] = f.id; return f.id;
+  fcache[key] = f.id; 
+  return f.id;
 }
 
 async function uploadFile(file, trolleyId, stepId, idx) {
@@ -981,6 +997,10 @@ async function finishReg(){
   btn.style.opacity = '0.75';
 
   try {
+    if (!curId || !db[curId]) {
+      throw new Error('Registo não encontrado. Recarregue a página.');
+    }
+    
     const ta=document.querySelector('#stepWrap textarea');
     if(ta) db[curId].steps[STEPS[curStep].id].notes=ta.value;
     touchRec(curId);
@@ -990,9 +1010,11 @@ async function finishReg(){
       try {
         await saveMetadataToDrive(curId);
         console.log('[FinishReg] Metadata guardada com sucesso');
-      } catch(err) {
-        console.error('Erro ao guardar metadata:', err);
-        // Continua mesmo com erro
+      } catch(driveErr) {
+        console.error('Erro ao guardar metadata:', driveErr);
+        const errMsg = driveErr.message || 'Erro ao sincronizar com Drive';
+        showToast('⚠️ ' + errMsg);
+        // Continua mesmo com erro de Drive (permite guardar localmente)
       }
     }
 
@@ -1003,12 +1025,14 @@ async function finishReg(){
     setTimeout(goHome, 900);
   } catch(err) {
     console.error('[FinishReg] Erro geral:', err);
+    const errorMsg = err.message || 'Erro ao guardar o registo';
     btn.innerHTML = '❌ Erro!';
+    showToast('❌ ' + errorMsg);
     setTimeout(() => {
       btn.innerHTML = '💾 Guardar Progresso';
       btn.disabled = false;
       btn.style.opacity = '1';
-    }, 2000);
+    }, 3000);
   }
 }
 
