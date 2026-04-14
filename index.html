@@ -265,6 +265,7 @@ body::before{display:none;}
     </div>
     <button class="btn btn-p" onclick="startReg()">Iniciar Registo →</button>
     <button class="btn btn-s" onclick="goHist()">📋 Ver Histórico de Registos</button>
+    <button class="btn btn-s" id="syncBtn" style="display:none;background:rgba(0,180,216,.1);color:var(--teal);margin-top:16px" onclick="syncRegistosFromDrive()">🔄 Sincronizar Agora</button>
   </div>
 
   <div style="padding:0 16px 32px">
@@ -375,6 +376,41 @@ if (localStorage.getItem('trolleyDB') && !Object.keys(db).length) {
 }
 
 function saveDB() { localStorage.setItem('tcDB', JSON.stringify(db)); }
+
+// IndexedDB para armazenar imagens grandes
+const dbPromise = (function() {
+  return new Promise(resolve => {
+    const req = indexedDB.open('trolleyCheckDB', 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('images')) {
+        db.createObjectStore('images', {keyPath: 'id'});
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+  });
+})();
+
+async function saveImageToIDB(imageId, blob) {
+  try {
+    const db = await dbPromise;
+    const tx = db.transaction('images', 'readwrite');
+    tx.objectStore('images').put({id: imageId, blob});
+  } catch(e) { console.log('[IDB] Erro ao guardar imagem:', e); }
+}
+
+async function getImageFromIDB(imageId) {
+  try {
+    const db = await dbPromise;
+    const tx = db.transaction('images', 'readonly');
+    return new Promise((resolve, reject) => {
+      const req = tx.objectStore('images').get(imageId);
+      req.onsuccess = () => resolve(req.result?.blob || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch(e) { console.log('[IDB] Erro ao recuperar imagem:', e); return null; }
+}
+
 function newRec(id) {
   const steps = {}; STEPS.forEach(s => { steps[s.id] = {photos:[], notes:''}; });
   db[id] = {id, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString(), steps};
@@ -444,6 +480,7 @@ function updateAuthUI(u) {
   document.getElementById('aBtnIn').style.display  = u ? 'none' : 'flex';
   document.getElementById('aBtnOut').style.display = u ? 'block' : 'none';
   document.getElementById('aInfo').style.display   = u ? 'flex' : 'none';
+  document.getElementById('syncBtn').style.display = u ? 'block' : 'none';
   document.getElementById('driveNotice').classList.toggle('show', !u);
   if (u) {
     const av = document.getElementById('aAvatar');
@@ -464,6 +501,7 @@ async function syncRegistosFromDrive() {
       {headers:{Authorization:'Bearer '+tok}});
     if (!r.ok) {
       console.log('[Sync] Erro ao listar pastas:', r.status);
+      showToast('❌ Erro ao sincronizar');
       return;
     }
     const data = await r.json();
@@ -492,22 +530,79 @@ async function syncRegistosFromDrive() {
         const metadata = await fr.json();
         
         if (metadata && metadata.id && metadata.steps) {
-          db[trolleyId] = metadata;
+          // Criar registo com metadata
+          db[trolleyId] = {
+            id: metadata.id,
+            createdAt: metadata.createdAt,
+            updatedAt: metadata.updatedAt,
+            steps: {}
+          };
+          
+          // Para cada step, descarregar as imagens do Drive
+          for (const [stepId, stepData] of Object.entries(metadata.steps)) {
+            db[trolleyId].steps[stepId] = {
+              photos: [],
+              notes: stepData.notes || ''
+            };
+            
+            // Descarregar cada imagem do Drive
+            for (const photo of stepData.photos) {
+              if (photo.fid && photo.link) {
+                try {
+                  console.log('[Sync] Descarregando imagem:', photo.fid);
+                  const imgResp = await fetch(`https://www.googleapis.com/drive/v3/files/${photo.fid}?alt=media`,
+                    {headers:{Authorization:'Bearer '+tok}});
+                  if (imgResp.ok) {
+                    const blob = await imgResp.blob();
+                    const dataUrl = await new Promise((resolve) => {
+                      const reader = new FileReader();
+                      reader.onload = (e) => resolve(e.target.result);
+                      reader.readAsDataURL(blob);
+                    });
+                    
+                    const photoEntry = {
+                      dataUrl: dataUrl,
+                      fid: photo.fid,
+                      link: photo.link,
+                      uploading: false
+                    };
+                    db[trolleyId].steps[stepId].photos.push(photoEntry);
+                    // Guardar imagem no IndexedDB também
+                    await saveImageToIDB(`${trolleyId}_${stepId}_${photo.fid}`, blob);
+                  }
+                } catch(err) {
+                  console.log('[Sync] Erro ao descarregar imagem:', err);
+                  // Continuar sem a imagem base64, mas com a referência do Drive
+                  db[trolleyId].steps[stepId].photos.push({
+                    dataUrl: '',
+                    fid: photo.fid,
+                    link: photo.link,
+                    uploading: false
+                  });
+                }
+              }
+            }
+          }
+          
           console.log('[Sync] Registo sincronizado:', trolleyId);
+          saveDB();
           synced++;
         }
       } catch(err) {
         console.log('[Sync] Erro ao sincronizar', trolleyId, ':', err);
       }
     }
-    saveDB();
+    
     if (synced > 0) {
       showToast(`✅ ${synced} registo${synced>1?'s':''} sincronizado${synced>1?'s':''} do Drive!`);
       renderRecent();
       renderHist();
+    } else {
+      console.log('[Sync] Nenhum registo novo para sincronizar');
     }
   } catch(err) {
     console.error('[Sync] Erro geral:', err);
+    showToast('❌ Erro na sincronização');
   }
 }
 
