@@ -967,31 +967,43 @@ document.getElementById('camInput').addEventListener('change', async function(e)
   autoSyncIfCompleted();
 });
 
-function finishReg(){
+async function finishReg(){
   const btn = document.getElementById('btnFin');
   // Feedback imediato no botão
-  const originalHTML = btn.innerHTML;
   btn.innerHTML = '⏳ A guardar...';
   btn.disabled = true;
   btn.style.opacity = '0.75';
 
-  const ta=document.querySelector('#stepWrap textarea');
-  if(ta) db[curId].steps[STEPS[curStep].id].notes=ta.value;
-  touchRec(curId);
+  try {
+    const ta=document.querySelector('#stepWrap textarea');
+    if(ta) db[curId].steps[STEPS[curStep].id].notes=ta.value;
+    touchRec(curId);
 
-  // Se ligado ao Drive, guardar metadata.json
-  if (tok) {
-    saveMetadataToDrive(curId).catch(err => {
-      console.error('Erro ao guardar metadata:', err);
-    });
-  }
+    // Se ligado ao Drive, guardar metadata.json e ESPERAR
+    if (tok) {
+      try {
+        await saveMetadataToDrive(curId);
+        console.log('[FinishReg] Metadata guardada com sucesso');
+      } catch(err) {
+        console.error('Erro ao guardar metadata:', err);
+        // Continua mesmo com erro
+      }
+    }
 
-  setTimeout(() => {
+    // Agora sim, mostrar sucesso
     btn.innerHTML = '✅ Guardado!';
     btn.style.opacity = '1';
     showToast('✅ Registo guardado!');
     setTimeout(goHome, 900);
-  }, 400);
+  } catch(err) {
+    console.error('[FinishReg] Erro geral:', err);
+    btn.innerHTML = '❌ Erro!';
+    setTimeout(() => {
+      btn.innerHTML = '💾 Guardar Progresso';
+      btn.disabled = false;
+      btn.style.opacity = '1';
+    }, 2000);
+  }
 }
 
 async function autoSyncIfCompleted() {
@@ -1118,7 +1130,7 @@ document.head.appendChild(mlink);
 // Register minimal service worker (required for PWA install prompt)
 if ('serviceWorker' in navigator) {
   const swCode = `
-    const VERSION = '1.7.0';
+    const VERSION = '1.8.0';
     self.addEventListener('install', e => self.skipWaiting());
     self.addEventListener('activate', e => {
       clients.claim();
