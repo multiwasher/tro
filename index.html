@@ -853,6 +853,7 @@ function switchStep(i){
     if(ta && curId && STEPS[curStep]) {
       db[curId].steps[STEPS[curStep].id].notes = ta.value;
       saveDB();
+      autoSyncIfCompleted();
     }
   } catch(e) {}
   curStep = i;
@@ -861,7 +862,11 @@ function switchStep(i){
     document.querySelectorAll('.tab')[i]?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
   } catch(e) {}
 }
-function saveNotes(sid,v){ db[curId].steps[sid].notes=v; touchRec(curId); }
+function saveNotes(sid,v){ 
+  db[curId].steps[sid].notes=v; 
+  touchRec(curId);
+  autoSyncIfCompleted();
+}
 function isComplete(rec){ return STEPS.every(s=>rec.steps[s.id].photos.length>=s.min); }
 function status(rec){
   const n=STEPS.reduce((a,s)=>a+rec.steps[s.id].photos.length,0), ok=isComplete(rec);
@@ -921,6 +926,8 @@ document.getElementById('camInput').addEventListener('change', async function(e)
   document.getElementById('uplOv').classList.remove('show');
   renderCap();
   showToast(ok===files.length?`☁️ ${ok} foto${ok>1?'s':''} no Drive!`:`⚠️ ${ok}/${files.length} enviadas. Ver consola.`);
+  // Sincronizar automaticamente se registo está completo
+  autoSyncIfCompleted();
 });
 
 function finishReg(){
@@ -948,6 +955,23 @@ function finishReg(){
     showToast('✅ Registo guardado!');
     setTimeout(goHome, 900);
   }, 400);
+}
+
+async function autoSyncIfCompleted() {
+  if (!tok || !curId) return;
+  const rec = db[curId];
+  if (!rec) return;
+  
+  // Só sincroniza se o registo está completo
+  if (isComplete(rec)) {
+    console.log('[AutoSync] Registo completo - sincronizando automaticamente');
+    try {
+      await saveMetadataToDrive(curId);
+      console.log('[AutoSync] Sincronização automática bem-sucedida');
+    } catch(err) {
+      console.log('[AutoSync] Erro na sincronização automática:', err);
+    }
+  }
 }
 
 // ══════════════════════════════════════════
@@ -1057,7 +1081,7 @@ document.head.appendChild(mlink);
 // Register minimal service worker (required for PWA install prompt)
 if ('serviceWorker' in navigator) {
   const swCode = `
-    const VERSION = '1.5.0';
+    const VERSION = '1.6.0';
     self.addEventListener('install', e => self.skipWaiting());
     self.addEventListener('activate', e => {
       clients.claim();
