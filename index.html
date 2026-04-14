@@ -548,10 +548,7 @@ async function syncRegistosFromDrive() {
     let synced = 0;
     for (const folder of folders) {
       const trolleyId = folder.name;
-      if (db[trolleyId]) {
-        console.log('[Sync] Registo', trolleyId, 'já existe localmente');
-        continue;
-      }
+      
       try {
         const mq = encodeURIComponent(`'${folder.id}' in parents and name='metadata.json' and trashed=false`);
         const mr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${mq}&fields=files(id)`,
@@ -566,65 +563,74 @@ async function syncRegistosFromDrive() {
         if (!fr.ok) continue;
         const metadata = await fr.json();
         
-        if (metadata && metadata.id && metadata.steps) {
-          // Criar registo com metadata
-          db[trolleyId] = {
-            id: metadata.id,
-            createdAt: metadata.createdAt,
-            updatedAt: metadata.updatedAt,
-            steps: {}
+        if (!metadata || !metadata.id || !metadata.steps) continue;
+        
+        // Verificar se já existe localmente
+        const existsLocally = !!db[trolleyId];
+        const isNewer = !existsLocally || new Date(metadata.updatedAt) > new Date(db[trolleyId].updatedAt);
+        
+        if (existsLocally && !isNewer) {
+          console.log('[Sync] Registo', trolleyId, 'já atualizado localmente');
+          continue;
+        }
+        
+        // Criar ou atualizar registo com metadata
+        db[trolleyId] = {
+          id: metadata.id,
+          createdAt: metadata.createdAt,
+          updatedAt: metadata.updatedAt,
+          steps: {}
+        };
+        
+        // Para cada step, descarregar as imagens do Drive
+        for (const [stepId, stepData] of Object.entries(metadata.steps)) {
+          db[trolleyId].steps[stepId] = {
+            photos: [],
+            notes: stepData.notes || ''
           };
           
-          // Para cada step, descarregar as imagens do Drive
-          for (const [stepId, stepData] of Object.entries(metadata.steps)) {
-            db[trolleyId].steps[stepId] = {
-              photos: [],
-              notes: stepData.notes || ''
-            };
-            
-            // Descarregar cada imagem do Drive
-            for (const photo of stepData.photos) {
-              if (photo.fid && photo.link) {
-                try {
-                  console.log('[Sync] Descarregando imagem:', photo.fid);
-                  const imgResp = await fetch(`https://www.googleapis.com/drive/v3/files/${photo.fid}?alt=media`,
-                    {headers:{Authorization:'Bearer '+tok}});
-                  if (imgResp.ok) {
-                    const blob = await imgResp.blob();
-                    const dataUrl = await new Promise((resolve) => {
-                      const reader = new FileReader();
-                      reader.onload = (e) => resolve(e.target.result);
-                      reader.readAsDataURL(blob);
-                    });
-                    
-                    const photoEntry = {
-                      dataUrl: dataUrl,
-                      fid: photo.fid,
-                      link: photo.link,
-                      uploading: false
-                    };
-                    db[trolleyId].steps[stepId].photos.push(photoEntry);
-                    // Guardar imagem no IndexedDB também
-                    await saveImageToIDB(`${trolleyId}_${stepId}_${photo.fid}`, blob);
-                  }
-                } catch(err) {
-                  console.log('[Sync] Erro ao descarregar imagem:', err);
-                  // Continuar sem a imagem base64, mas com a referência do Drive
-                  db[trolleyId].steps[stepId].photos.push({
-                    dataUrl: '',
+          // Descarregar cada imagem do Drive
+          for (const photo of stepData.photos) {
+            if (photo.fid && photo.link) {
+              try {
+                console.log('[Sync] Descarregando imagem:', photo.fid);
+                const imgResp = await fetch(`https://www.googleapis.com/drive/v3/files/${photo.fid}?alt=media`,
+                  {headers:{Authorization:'Bearer '+tok}});
+                if (imgResp.ok) {
+                  const blob = await imgResp.blob();
+                  const dataUrl = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.readAsDataURL(blob);
+                  });
+                  
+                  const photoEntry = {
+                    dataUrl: dataUrl,
                     fid: photo.fid,
                     link: photo.link,
                     uploading: false
-                  });
+                  };
+                  db[trolleyId].steps[stepId].photos.push(photoEntry);
+                  // Guardar imagem no IndexedDB também
+                  await saveImageToIDB(`${trolleyId}_${stepId}_${photo.fid}`, blob);
                 }
+              } catch(err) {
+                console.log('[Sync] Erro ao descarregar imagem:', err);
+                // Continuar sem a imagem base64, mas com a referência do Drive
+                db[trolleyId].steps[stepId].photos.push({
+                  dataUrl: '',
+                  fid: photo.fid,
+                  link: photo.link,
+                  uploading: false
+                });
               }
             }
           }
-          
-          console.log('[Sync] Registo sincronizado:', trolleyId);
-          saveDB();
-          synced++;
         }
+        
+        console.log('[Sync]', existsLocally ? 'Registo atualizado:' : 'Registo sincronizado:', trolleyId);
+        saveDB();
+        synced++;
       } catch(err) {
         console.log('[Sync] Erro ao sincronizar', trolleyId, ':', err);
       }
@@ -1130,7 +1136,7 @@ document.head.appendChild(mlink);
 // Register minimal service worker (required for PWA install prompt)
 if ('serviceWorker' in navigator) {
   const swCode = `
-    const VERSION = '1.8.0';
+    const VERSION = '1.9.0';
     self.addEventListener('install', e => self.skipWaiting());
     self.addEventListener('activate', e => {
       clients.claim();
